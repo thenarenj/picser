@@ -1,441 +1,422 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import Image from 'next/image';
-import { Upload, Copy, ExternalLink, CheckCircle, AlertCircle, Zap, Star, Link as LinkIcon } from 'lucide-react';
+import {
+  Upload,
+  Copy,
+  ExternalLink,
+  Check,
+  AlertCircle,
+  ImagePlus,
+  Sparkles,
+} from 'lucide-react';
 import { saveToHistory } from '@/utils/storage';
+import {
+  formatFileSize,
+  validateImageFile,
+  validationErrorMessage,
+} from '@/utils/format';
 
 interface UploadResult {
-    success: boolean;
-    url: string;
-    urls?: {
-        github: string;
-        raw: string;
-        jsdelivr: string;
-        github_commit: string;
-        raw_commit: string;
-        jsdelivr_commit: string;
-    };
-    filename: string;
-    size: number;
-    type: string;
-    commit_sha?: string;
-    github_url?: string;
-    error?: string;
+  success: boolean;
+  url: string;
+  urls?: {
+    github: string;
+    raw: string;
+    jsdelivr: string;
+    github_commit: string;
+    raw_commit: string;
+    jsdelivr_commit: string;
+  };
+  filename: string;
+  size: number;
+  type: string;
+  commit_sha?: string;
+  github_url?: string;
+  error?: string;
 }
 
 interface PreviewFile {
-    file: File;
-    url: string;
+  file: File;
+  url: string;
 }
 
 interface ImageUploaderProps {
-    onUpload?: () => void;
+  onUpload?: () => void;
 }
 
 export default function ImageUploader({ onUpload }: ImageUploaderProps = {}) {
-    const [isDragging, setIsDragging] = useState(false);
-    const [uploading, setUploading] = useState(false);
-    const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
-    const [error, setError] = useState<string | null>(null);
-    const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
-    const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
 
-    const handleUpload = useCallback(async (file: File) => {
-        setUploading(true);
-        setError(null);
-        setUploadResult(null);
+  const handleUpload = useCallback(
+    async (file: File) => {
+      const validationError = validateImageFile(file);
+      if (validationError) {
+        setError(validationErrorMessage(validationError));
+        return;
+      }
 
-        // Create preview
-        const previewUrl = URL.createObjectURL(file);
-        setPreviewFile({ file, url: previewUrl });
+      setError(null);
+      setUploadResult(null);
 
-        try {
-            const formData = new FormData();
-            formData.append('file', file);
+      const previewUrl = URL.createObjectURL(file);
+      setPreviewFile({ file, url: previewUrl });
+      setUploading(true);
 
-            const response = await fetch('/api/upload', {
-                method: 'POST',
-                body: formData,
-            });
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
 
-            const result = await response.json();
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData,
+        });
 
-            if (result.success) {
-                setUploadResult(result);
-                // Save to history with jsDelivr CDN URL as primary
-                saveToHistory({
-                    filename: result.filename,
-                    url: result.urls?.jsdelivr_commit || result.url,
-                    github_url: result.github_url,
-                    size: result.size,
-                    type: result.type,
-                    urls: result.urls,
-                });
-                // Notify parent component
-                onUpload?.();
-            } else {
-                setError(result.error || 'Upload failed');
-            }
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Upload failed');
-        } finally {
-            setUploading(false);
+        const result = await response.json();
+
+        if (result.success) {
+          setUploadResult(result);
+          saveToHistory({
+            filename: result.filename,
+            url: result.urls?.jsdelivr_commit || result.url,
+            github_url: result.github_url,
+            size: result.size,
+            type: result.type,
+            urls: result.urls,
+          });
+          onUpload?.();
+        } else {
+          setError(result.error || 'Upload failed');
         }
-    }, [onUpload]);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Upload failed');
+      } finally {
+        setUploading(false);
+      }
+    },
+    [onUpload]
+  );
 
-    const handleDrag = useCallback((e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-    }, []);
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepth.current += 1;
+    setIsDragging(true);
+  }, []);
 
-    const handleDragIn = useCallback((e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragging(true);
-    }, []);
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepth.current -= 1;
+    if (dragDepth.current <= 0) {
+      dragDepth.current = 0;
+      setIsDragging(false);
+    }
+  }, []);
 
-    const handleDragOut = useCallback((e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragging(false);
-    }, []);
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
 
-    const handleDrop = useCallback((e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragging(false);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragDepth.current = 0;
+      setIsDragging(false);
 
-        const files = e.dataTransfer.files;
-        if (files && files.length > 0) {
-            const file = files[0];
-            if (file.type.startsWith('image/')) {
-                handleUpload(file);
-            } else {
-                setError('Please select an image file');
-            }
-        }
-    }, [handleUpload]);
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        handleUpload(files[0]);
+      }
+    },
+    [handleUpload]
+  );
 
-    const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const files = e.target.files;
-        if (files && files.length > 0) {
-            handleUpload(files[0]);
-        }
-    }, [handleUpload]);
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (files && files.length > 0) {
+        handleUpload(files[0]);
+      }
+      e.target.value = '';
+    },
+    [handleUpload]
+  );
 
-    const copyToClipboard = async (text: string) => {
-        try {
-            await navigator.clipboard.writeText(text);
-            setCopiedUrl(text);
-            setTimeout(() => setCopiedUrl(null), 2000);
-        } catch (err) {
-            console.error('Failed to copy:', err);
-        }
-    };
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedUrl(text);
+      setTimeout(() => setCopiedUrl(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
 
-    const resetUpload = () => {
-        setUploadResult(null);
-        setError(null);
-        setPreviewFile(null);
-        setCopiedUrl(null);
-    };
+  const resetUpload = () => {
+    if (previewFile?.url) {
+      URL.revokeObjectURL(previewFile.url);
+    }
+    setUploadResult(null);
+    setError(null);
+    setPreviewFile(null);
+    setCopiedUrl(null);
+  };
 
-    const formatFileSize = (bytes: number) => {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    };
+  const primaryUrl =
+    uploadResult?.urls?.jsdelivr_commit || uploadResult?.url || '';
 
-    return (
-        <div className="max-w-4xl mx-auto">
-            <div className="bg-white/70 backdrop-blur-sm rounded-2xl shadow-xl border border-slate-200/50 p-8">
-                {/* Header */}
-                <div className="text-center mb-8">
-                    <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-2xl mb-4">
-                        <Upload className="h-8 w-8 text-white" />
-                    </div>
-                    <h1 className="text-3xl font-bold text-slate-900 mb-2">
-                        Upload Your Images
-                    </h1>
-                    <p className="text-slate-600 text-lg">
-                        Get instant CDN URLs via jsDelivr with global caching and permanent links
-                    </p>
-                </div>
-
-                {error && (
-                    <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl">
-                        <div className="flex items-center">
-                            <AlertCircle className="h-5 w-5 text-red-500 mr-2" />
-                            <p className="text-red-700 font-medium">{error}</p>
-                        </div>
-                    </div>
-                )}
-
-                {uploadResult ? (
-                    <div className="space-y-6">
-                        {/* Success Message */}
-                        <div className="text-center">
-                            <div className="inline-flex items-center justify-center w-12 h-12 bg-green-100 rounded-full mb-4">
-                                <CheckCircle className="h-6 w-6 text-green-600" />
-                            </div>
-                            <h3 className="text-xl font-semibold text-slate-900 mb-2">Upload Successful!</h3>
-                            <p className="text-slate-600">Your image is now available on the global CDN</p>
-                        </div>
-
-                        {/* Image Preview */}
-                        <div className="text-center">
-                            <div className="inline-block relative">
-                                <Image
-                                    src={uploadResult.urls?.jsdelivr_commit || uploadResult.url}
-                                    alt="Uploaded image"
-                                    width={300}
-                                    height={200}
-                                    className="max-w-sm max-h-64 rounded-xl shadow-lg object-contain border border-slate-200"
-                                    unoptimized
-                                />
-                                <div className="absolute top-2 right-2 bg-green-500 text-white px-2 py-1 rounded-full text-xs font-medium">
-                                    CDN Ready
-                                </div>
-                            </div>
-                            <div className="mt-3 text-sm text-slate-600">
-                                <p className="font-medium">{uploadResult.filename}</p>
-                                <p>{formatFileSize(uploadResult.size)} • {uploadResult.type}</p>
-                            </div>
-                        </div>
-
-                        {/* Primary CDN URL */}
-                        {uploadResult.urls?.jsdelivr_commit && (
-                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-200">
-                                <div className="flex items-center mb-3">
-                                    <div className="flex items-center space-x-2">
-                                        <Zap className="h-5 w-5 text-blue-600" />
-                                        <h4 className="font-semibold text-blue-900">Recommended: jsDelivr CDN URL</h4>
-                                    </div>
-                                    <Star className="h-4 w-4 text-yellow-500 ml-2" />
-                                </div>
-                                <p className="text-sm text-blue-700 mb-4">
-                                    ⚡ Lightning fast global CDN • 🔒 Permanent commit-based URL • 📈 Heavy caching
-                                </p>
-                                <div className="flex items-center space-x-3">
-                                    <input
-                                        type="text"
-                                        value={uploadResult.urls.jsdelivr_commit}
-                                        readOnly
-                                        className="flex-1 px-4 py-3 border border-blue-300 rounded-lg text-sm bg-white/80 font-mono text-slate-800"
-                                    />
-                                    <button
-                                        onClick={() => copyToClipboard(uploadResult.urls!.jsdelivr_commit)}
-                                        className="flex items-center space-x-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-                                    >
-                                        {copiedUrl === uploadResult.urls.jsdelivr_commit ? (
-                                            <>
-                                                <CheckCircle className="h-4 w-4" />
-                                                <span>Copied!</span>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Copy className="h-4 w-4" />
-                                                <span>Copy</span>
-                                            </>
-                                        )}
-                                    </button>
-                                    <a
-                                        href={uploadResult.urls.jsdelivr_commit}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="p-3 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors"
-                                    >
-                                        <ExternalLink className="h-4 w-4" />
-                                    </a>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Alternative URLs */}
-                        <div className="space-y-4">
-                            <h4 className="font-semibold text-slate-900 flex items-center">
-                                <LinkIcon className="h-4 w-4 mr-2" />
-                                Alternative URLs
-                            </h4>
-
-                            <div className="grid gap-4">
-                                {/* Raw GitHub URL (Commit-based) */}
-                                {uploadResult.urls?.raw_commit && (
-                                    <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <span className="text-sm font-medium text-slate-700">Raw GitHub URL (Permanent)</span>
-                                            <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">Permanent</span>
-                                        </div>
-                                        <div className="flex items-center space-x-2">
-                                            <input
-                                                type="text"
-                                                value={uploadResult.urls.raw_commit}
-                                                readOnly
-                                                className="flex-1 px-3 py-2 border text-amber-950 border-slate-300 rounded text-xs bg-white font-mono"
-                                            />
-                                            <button
-                                                onClick={() => copyToClipboard(uploadResult.urls!.raw_commit)}
-                                                className="p-2 text-slate-500 hover:text-slate-700 transition-colors"
-                                            >
-                                                {copiedUrl === uploadResult.urls.raw_commit ? (
-                                                    <CheckCircle className="h-4 w-4 text-green-600" />
-                                                ) : (
-                                                    <Copy className="h-4 w-4" />
-                                                )}
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* jsDelivr Branch URL */}
-                                {uploadResult.urls?.jsdelivr && (
-                                    <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <span className="text-sm font-medium text-slate-700">jsDelivr CDN (Branch-based)</span>
-                                            <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full">Dynamic</span>
-                                        </div>
-                                        <div className="flex items-center space-x-2">
-                                            <input
-                                                type="text"
-                                                value={uploadResult.urls.jsdelivr}
-                                                readOnly
-                                                className="flex-1 px-3 py-2 border text-amber-950 border-slate-300 rounded text-xs bg-white font-mono"
-                                            />
-                                            <button
-                                                onClick={() => copyToClipboard(uploadResult.urls!.jsdelivr)}
-                                                className="p-2 text-slate-500 hover:text-slate-700 transition-colors"
-                                            >
-                                                {copiedUrl === uploadResult.urls.jsdelivr ? (
-                                                    <CheckCircle className="h-4 w-4 text-green-600" />
-                                                ) : (
-                                                    <Copy className="h-4 w-4" />
-                                                )}
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* GitHub URL */}
-                                {uploadResult.urls?.github_commit && (
-                                    <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <span className="text-sm font-medium text-slate-700">GitHub Repository URL</span>
-                                            <span className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded-full">Source</span>
-                                        </div>
-                                        <div className="flex items-center space-x-2">
-                                            <input
-                                                type="text"
-                                                value={uploadResult.urls.github_commit}
-                                                readOnly
-                                                className="flex-1 px-3 py-2 border text-amber-950 border-slate-300 rounded text-xs bg-white font-mono"
-                                            />
-                                            <button
-                                                onClick={() => copyToClipboard(uploadResult.urls!.github_commit)}
-                                                className="p-2 text-slate-500 hover:text-slate-700 transition-colors"
-                                            >
-                                                {copiedUrl === uploadResult.urls.github_commit ? (
-                                                    <CheckCircle className="h-4 w-4 text-green-600" />
-                                                ) : (
-                                                    <Copy className="h-4 w-4" />
-                                                )}
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Upload Another Button */}
-                        <div className="text-center pt-4">
-                            <button
-                                onClick={resetUpload}
-                                className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 font-medium shadow-lg hover:shadow-xl"
-                            >
-                                Upload Another Image
-                            </button>
-                        </div>
-                    </div>
-                ) : (
-                    <div>
-                        {previewFile && (
-                            <div className="mb-8 text-center">
-                                <div className="inline-block relative">
-                                    <Image
-                                        src={previewFile.url}
-                                        alt="Preview"
-                                        width={300}
-                                        height={200}
-                                        className="max-w-sm max-h-64 rounded-xl shadow-lg object-contain border border-slate-200"
-                                        unoptimized
-                                    />
-                                    {uploading && (
-                                        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm rounded-xl flex items-center justify-center">
-                                            <div className="text-white text-center">
-                                                <div className="animate-spin rounded-full h-10 w-10 border-2 border-white border-t-transparent mx-auto mb-3"></div>
-                                                <p className="font-medium">Uploading to GitHub...</p>
-                                                <p className="text-sm opacity-90">Generating CDN URLs</p>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                                <p className="text-sm text-slate-600 mt-3 font-medium">{previewFile.file.name}</p>
-                            </div>
-                        )}
-
-                        <div
-                            className={`
-                                relative border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-200
-                                ${isDragging
-                                    ? 'border-blue-400 bg-blue-50/50 scale-105'
-                                    : 'border-slate-300 hover:border-blue-400 hover:bg-blue-50/30'
-                                }
-                                ${uploading ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
-                            `}
-                            onDragEnter={handleDragIn}
-                            onDragLeave={handleDragOut}
-                            onDragOver={handleDrag}
-                            onDrop={handleDrop}
-                        >
-                            <input
-                                type="file"
-                                accept="image/*"
-                                onChange={handleFileSelect}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                                disabled={uploading}
-                            />
-
-                            <div className="space-y-4">
-                                <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-100 to-indigo-100 rounded-2xl">
-                                    <Upload className="h-8 w-8 text-blue-600" />
-                                </div>
-
-                                <div>
-                                    <h3 className="text-xl font-semibold text-slate-900 mb-2">
-                                        {isDragging ? 'Drop your image here' : 'Drag & drop or click to upload'}
-                                    </h3>
-                                    <p className="text-slate-600">
-                                        Supports JPG, PNG, GIF, WebP up to 100MB
-                                    </p>
-                                </div>
-
-                                <div className="flex items-center justify-center space-x-6 text-sm text-slate-500">
-                                    <div className="flex items-center space-x-1">
-                                        <Zap className="h-4 w-4" />
-                                        <span>CDN Powered</span>
-                                    </div>
-                                    <div className="flex items-center space-x-1">
-                                        <CheckCircle className="h-4 w-4" />
-                                        <span>Permanent URLs</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </div>
+  return (
+    <div className="w-full max-w-xl mx-auto">
+      {error && (
+        <div
+          role="alert"
+          className="mb-4 flex items-start gap-3 rounded-2xl border border-red-200/80 bg-red-50/90 px-4 py-3 text-red-800 animate-float-in"
+        >
+          <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+          <p className="text-sm font-medium leading-relaxed">{error}</p>
         </div>
-    );
+      )}
+
+      {uploadResult ? (
+        <div className="rounded-[1.75rem] border border-orange-200/60 bg-white/80 p-5 sm:p-7 shadow-[0_20px_50px_-24px_rgba(194,65,12,0.35)] backdrop-blur-md animate-float-in">
+          <div className="text-center mb-6">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--leaf-soft)] text-[var(--leaf)] animate-success-pop">
+              <Check className="h-6 w-6" strokeWidth={2.5} />
+            </div>
+            <h2 className="font-[family-name:var(--font-syne)] text-xl sm:text-2xl font-semibold text-stone-900">
+              Ready to share
+            </h2>
+            <p className="mt-1 text-sm text-stone-500">
+              Your image is live on the CDN
+            </p>
+          </div>
+
+          <div className="mb-6 flex justify-center">
+            <div className="relative overflow-hidden rounded-2xl border border-stone-200/80 bg-stone-50">
+              <Image
+                src={primaryUrl}
+                alt="Uploaded image"
+                width={360}
+                height={240}
+                className="max-h-56 w-auto max-w-full object-contain"
+                unoptimized
+              />
+            </div>
+          </div>
+
+          <div className="mb-2 flex items-center justify-between gap-3 text-xs text-stone-500">
+            <span className="truncate font-medium text-stone-700">
+              {uploadResult.filename.split('/').pop()}
+            </span>
+            <span className="shrink-0">
+              {formatFileSize(uploadResult.size)}
+            </span>
+          </div>
+
+          <div className="rounded-2xl border border-orange-200/70 bg-gradient-to-br from-orange-50/90 to-amber-50/50 p-4">
+            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[var(--narenj-deep)]">
+              <Sparkles className="h-4 w-4" />
+              CDN link
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+              <input
+                type="text"
+                value={primaryUrl}
+                readOnly
+                aria-label="CDN URL"
+                className="min-w-0 flex-1 rounded-xl border border-orange-200/80 bg-white/90 px-3 py-2.5 font-mono text-xs text-stone-800 outline-none focus:ring-2 focus:ring-orange-300/60"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(primaryUrl)}
+                  className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-[var(--narenj)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--narenj-deep)] active:scale-[0.98]"
+                >
+                  {copiedUrl === primaryUrl ? (
+                    <>
+                      <Check className="h-4 w-4" />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4" />
+                      Copy
+                    </>
+                  )}
+                </button>
+                <a
+                  href={primaryUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center rounded-xl border border-stone-200 bg-white px-3 text-stone-600 transition hover:bg-stone-50"
+                  aria-label="Open image"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              </div>
+            </div>
+          </div>
+
+          {uploadResult.urls && (
+            <details className="mt-4 group">
+              <summary className="cursor-pointer list-none text-sm font-medium text-stone-500 transition hover:text-stone-800 [&::-webkit-details-marker]:hidden">
+                <span className="inline-flex items-center gap-1.5">
+                  More links
+                  <span className="text-stone-400 group-open:rotate-180 transition-transform">
+                    ▾
+                  </span>
+                </span>
+              </summary>
+              <div className="mt-3 space-y-2 animate-float-in">
+                {[
+                  {
+                    label: 'Permanent raw',
+                    value: uploadResult.urls.raw_commit,
+                  },
+                  {
+                    label: 'Branch CDN',
+                    value: uploadResult.urls.jsdelivr,
+                  },
+                  {
+                    label: 'GitHub',
+                    value: uploadResult.urls.github_commit,
+                  },
+                ]
+                  .filter((item) => item.value)
+                  .map((item) => (
+                    <div
+                      key={item.label}
+                      className="flex items-center gap-2 rounded-xl border border-stone-200/70 bg-white/70 px-3 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                          {item.label}
+                        </p>
+                        <p className="truncate font-mono text-xs text-stone-700">
+                          {item.value}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(item.value)}
+                        className="rounded-lg p-2 text-stone-500 transition hover:bg-orange-50 hover:text-[var(--narenj)]"
+                        aria-label={`Copy ${item.label}`}
+                      >
+                        {copiedUrl === item.value ? (
+                          <Check className="h-4 w-4 text-[var(--leaf)]" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </details>
+          )}
+
+          <button
+            type="button"
+            onClick={resetUpload}
+            className="mt-6 w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold text-stone-800 transition hover:border-orange-200 hover:bg-orange-50/50 active:scale-[0.99]"
+          >
+            Upload another
+          </button>
+        </div>
+      ) : (
+        <div
+          className={`
+            relative overflow-hidden rounded-[1.75rem] border bg-white/75 p-6 sm:p-8
+            shadow-[0_24px_60px_-28px_rgba(194,65,12,0.28)] backdrop-blur-md
+            transition-all duration-300
+            ${
+              isDragging
+                ? 'border-[var(--narenj)] bg-orange-50/80 scale-[1.01] animate-soft-pulse'
+                : 'border-orange-200/50 hover:border-orange-300/80'
+            }
+            ${uploading ? 'pointer-events-none' : ''}
+          `}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileSelect}
+            className="sr-only"
+            disabled={uploading}
+            id="narenj-file-input"
+          />
+
+          {previewFile ? (
+            <div className="text-center animate-float-in">
+              <div className="relative mx-auto mb-5 inline-block overflow-hidden rounded-2xl border border-stone-200">
+                <Image
+                  src={previewFile.url}
+                  alt="Preview"
+                  width={280}
+                  height={180}
+                  className="max-h-44 w-auto object-contain"
+                  unoptimized
+                />
+                {uploading && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-stone-950/45 backdrop-blur-[2px]">
+                    <div className="mb-3 h-10 w-10 rounded-full border-2 border-white/30 border-t-white animate-spin-ring" />
+                    <p className="text-sm font-medium text-white">Uploading…</p>
+                  </div>
+                )}
+              </div>
+              <p className="truncate text-sm text-stone-600">
+                {previewFile.file.name}
+              </p>
+            </div>
+          ) : (
+            <label
+              htmlFor="narenj-file-input"
+              className="flex cursor-pointer flex-col items-center text-center outline-none"
+            >
+              <div
+                className={`
+                  mb-5 flex h-16 w-16 items-center justify-center rounded-2xl
+                  bg-gradient-to-br from-orange-100 to-amber-50 text-[var(--narenj)]
+                  shadow-inner transition duration-300
+                  ${isDragging ? 'scale-110' : ''}
+                `}
+              >
+                {isDragging ? (
+                  <ImagePlus className="h-8 w-8" />
+                ) : (
+                  <Upload className="h-8 w-8" />
+                )}
+              </div>
+
+              <h2 className="font-[family-name:var(--font-syne)] text-xl sm:text-2xl font-semibold text-stone-900">
+                {isDragging ? 'Drop it here' : 'Drop or choose an image'}
+              </h2>
+              <p className="mt-2 max-w-xs text-sm leading-relaxed text-stone-500">
+                JPG, PNG, GIF, or WebP — up to 100MB. Free forever.
+              </p>
+
+              <span className="mt-6 inline-flex items-center justify-center rounded-2xl bg-[var(--narenj)] px-6 py-3 text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(232,93,4,0.7)] transition hover:bg-[var(--narenj-deep)] active:scale-[0.98]">
+                Choose image
+              </span>
+            </label>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
